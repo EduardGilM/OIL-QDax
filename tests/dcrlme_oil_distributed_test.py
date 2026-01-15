@@ -150,11 +150,11 @@ def run_dcrlme_oil_distributed(
     random_key, subkey = jax.random.split(random_key)
     keys = jax.random.split(subkey, num=total_batch_size)
 
-    # For distributed execution, data should NOT have device dimension here
-    # The distributed_init_fn will add device dimension via jax.pmap
+    # For distributed execution, use flat arrays (no device dimension)
+    # The distributed_init_fn will handle device dimension via jax.pmap
     fake_batch_obs = jnp.zeros(shape=(total_batch_size, env.observation_size))
 
-    # Initialize params - no device dimension needed
+    # Initialize params without device dimension - distributed_init_fn adds it
     init_params = jax.vmap(policy_network.init)(keys.flatten(), fake_batch_obs)
 
     # Define the function to play a step with the policy in the environment
