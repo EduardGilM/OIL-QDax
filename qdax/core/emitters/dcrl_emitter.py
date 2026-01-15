@@ -428,24 +428,21 @@ class DCRLEmitter(Emitter):
         # For first iteration, use zeros for desc_prime
         # Check if buffer has data by checking if data contains any non-NaN values
         has_buffer_data = jnp.any(~jnp.isnan(emitter_state.replay_buffer.data[0]))
-
-        # Define functions for each branch of the conditional
-        def get_prev_desc_prime_from_buffer(_):
-            key, subkey = jax.random.split(emitter_state.key)
-            sample_transition, _ = emitter_state.replay_buffer.sample(subkey, 1)
-            # desc_prime from sampled transition (first element)
-            return jax.tree_util.tree_map(lambda x: x[0, -1, :], sample_transition)
-
-        def get_prev_desc_prime_zeros(_):
-            return jnp.zeros((1, descriptors.shape[-1]))
-
         prev_desc_prime = jax.lax.cond(
             has_buffer_data,
             # If buffer has data, sample to get desc_prime
-            get_prev_desc_prime_from_buffer,
+            lambda _: (
+                key, subkey = jax.random.split(emitter_state.key)
+                sample_transition, _ = emitter_state.replay_buffer.sample(subkey, 1)
+                # desc_prime from sampled transition (first element)
+                jax.tree_util.tree_map(
+                    lambda x: x[0, -1, :],
+                    sample_transition
+                )
+            ),
             # Otherwise, use zeros
-            get_prev_desc_prime_zeros,
-            None,
+            lambda _: jnp.zeros((1, descriptors.shape[-1])),
+            None
         )
 
         desc_prime = jnp.concatenate(
