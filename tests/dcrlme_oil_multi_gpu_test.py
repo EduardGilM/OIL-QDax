@@ -140,13 +140,13 @@ def run_dcrlme_oil_multi_gpu(
         final_activation=jnp.tanh,
     )
 
-    # Init population of controllers - total batch size
+    # Init population of controllers for initial scoring (total batch size)
     random_key, subkey = jax.random.split(random_key)
     keys = jax.random.split(subkey, num=total_batch_size)
     fake_batch_obs = jnp.zeros(shape=(total_batch_size, env.observation_size))
     init_params = jax.vmap(policy_network.init)(keys, fake_batch_obs)
 
-    # Define function to play a step with policy in the environment
+    # Define function to play a step with policy in environment
     def play_step_fn(
         env_state: EnvState, policy_params: Params, random_key: RNGKey
     ) -> Tuple[EnvState, Params, RNGKey, DCRLTransition]:
@@ -166,6 +166,100 @@ def run_dcrlme_oil_multi_gpu(
             desc=jnp.zeros(
                 env.behavior_descriptor_length,
             )
+            * jnp.nan,
+            desc_prime=jnp.zeros(
+                env.behavior_descriptor_length,
+            )
+            * jnp.nan,
+        )
+
+        return next_state, policy_params, random_key, transition
+
+    # Prepare scoring function
+    bd_extraction_fn = behavior_descriptor_extractor[env_name]
+
+    def scoring_fn(params, key):
+        return reset_based_scoring_function_brax_envs(
+            params,
+            key,
+            episode_length=episode_length,
+            play_reset_fn=reset_fn,
+            play_step_fn=play_step_fn,
+            behavior_descriptor_extractor=bd_extraction_fn,
+        )
+
+    # For now, DON'T use pmap - it's causing shape mismatches
+    # We'll run updates in parallel instead
+    scoring_fn = scoring_fn
+
+    # Get minimum reward value to make sure qd_score are positive
+    reward_offset = environments.reward_offset.get(env_name, 0.0)
+
+    # Define a metrics function
+    metrics_function = functools.partial(
+        default_qd_metrics,
+        qd_offset=reward_offset * episode_length,
+    )
+
+    # Define DCRL-emitter config
+    # Use batch_size_per_device for DCRL to match scoring batch size
+    dcrl_emitter_config = DCRLMEConfig(
+        ga_batch_size=ga_batch_size,
+        dcrl_batch_size=dcrl_batch_size,
+        ai_batch_size=ai_batch_size,
+        lengthscale=lengthscale,
+        critic_hidden_layer_size=critic_hidden_layer_size,
+        num_critic_training_steps=num_critic_training_steps,
+        num_pg_training_steps=num_pg_training_steps,
+        batch_size=batch_size_per_device,  # Match scoring batch per device
+        replay_buffer_size=replay_buffer_size,
+        discount=discount,
+        reward_scaling=reward_scaling,
+        critic_learning_rate=critic_learning_rate,
+        actor_learning_rate=actor_learning_rate,
+        policy_learning_rate=policy_learning_rate,
+        noise_clip=noise_clip,
+        policy_noise=policy_noise,
+        soft_tau_update=soft_tau_update,
+        policy_delay=policy_delay,
+    )
+
+    # Get the emitter
+    variation_fn = functools.partial(
+        isoline_variation, iso_sigma=iso_sigma, line_sigma=line_sigma
+    )
+
+    dcrl_emitter = DCRLMEEmitter(
+        config=dcrl_emitter_config,
+        policy_network=policy_network,
+        actor_network=actor_dc_network,
+        env=env,
+        variation_fn=variation_fn,
+    )
+
+    # Instantiate MAP Elites
+    map_elites = MAPElites(
+        scoring_function=scoring_fn,
+        emitter=dcrl_emitter,
+        metrics_function=metrics_function,
+    )
+
+    print("Running initial scoring (non-pmap) to compute initial repertoire...")
+    # For initial scoring, don't use pmap - use vmap
+    # Initial params have shape (256,), so we can directly score them
+    fitnesses, descriptors, extra_scores, random_key = reset_based_scoring_function_brax_envs(
+        init_params,
+        random_key,
+        episode_length=episode_length,
+        play_reset_fn=reset_fn,
+        play_step_fn=play_step_fn,
+        behavior_descriptor_extractor=bd_extraction_fn,
+    )
+
+    # compute initial repertoire
+    repertoire, emitter_state, random_key = map_elites.init(
+        init_params, centroids, random_key
+    )
             * jnp.nan,
             desc_prime=jnp.zeros(
                 env.behavior_descriptor_length,
@@ -254,26 +348,73 @@ def run_dcrlme_oil_multi_gpu(
 
     print("Running DCRL-ME with OI wrapper (multi-GPU scoring)...")
 
+    # Create pmap version of scoring for parallel updates
+    def scoring_fn_pmap(params, key):
+        return reset_based_scoring_function_brax_envs(
+            params,
+            key,
+            episode_length=episode_length,
+            play_reset_fn=reset_fn,
+            play_step_fn=play_step_fn,
+            behavior_descriptor_extractor=bd_extraction_fn,
+        )
+
+    scoring_fn_parallel = jax.pmap(
+        scoring_fn_pmap,
+        devices=devices,
+        axis_name="batch",
+    )
+
+    # Define update function for pmap
     @jax.jit
-    def update_scan_fn(carry: Any, unused: Any) -> Any:
-        # iterate over grid
-        repertoire, emitter_state, metrics, random_key = map_elites.update(*carry)
+    def update_pmap_fn(carry, _):
+        repertoire, emitter_state, random_key = carry
+        # Run scoring in parallel across GPUs
+        genotypes, extra_info, random_key = dcrl_emitter.emit(
+            repertoire, emitter_state, random_key
+        )
+
+        # Score offsprings in parallel
+        fitnesses, descriptors, extra_scores, random_key = scoring_fn_parallel(
+            genotypes, random_key
+        )
+
+        # Add to repertoire and update emitter
+        repertoire = repertoire.add(
+            genotypes, descriptors, fitnesses
+        )
+        emitter_state = dcrl_emitter.state_update(
+            emitter_state,
+            repertoire,
+            genotypes,
+            fitnesses,
+            descriptors,
+            extra_scores,
+        )
+        metrics = metrics_function(repertoire)
+
         return (repertoire, emitter_state, random_key), metrics
+
+    # Create pmap version of update function
+    def update_fn_pmap(repertoire, emitter_state, random_key):
+        # We'll scan sequentially but each iteration uses pmap for scoring
+        @jax.jit
+        def scan_body(carry, _):
+            return update_pmap_fn(carry, _)
+
+        return jax.lax.scan(
+            scan_body,
+            (repertoire, emitter_state, random_key),
+            (),
+            length=num_iterations,
+        )
 
     # Run the algorithm
     (
-        (
-            repertoire,
-            emitter_state,
-            random_key,
-        ),
-        metrics,
-    ) = jax.lax.scan(
-        update_scan_fn,
-        (repertoire, emitter_state, random_key),
-        (),
-        length=num_iterations,
-    )
+        repertoire,
+        emitter_state,
+        random_key,
+    ), metrics = update_fn_pmap(repertoire, emitter_state, random_key)
 
     print(f"Final repertoire size: {jnp.sum(repertoire.fitnesses != -jnp.inf)}")
 
