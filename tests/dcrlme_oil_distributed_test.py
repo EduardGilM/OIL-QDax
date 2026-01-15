@@ -102,8 +102,10 @@ def run_dcrlme_oil_distributed_test(
         qdax_wrappers_kwargs=[{"episode_length": episode_length}],
     )
 
+    # Apply reward offset (use 0.0 if env_name not in reward_offset)
+    reward_offset = environments.reward_offset.get(env_name, 0.0)
     env = OffsetRewardWrapper(
-        env, offset=environments.reward_offset[env_name]
+        env, offset=reward_offset
     )  # apply reward offset as DCRL needs positive rewards
     env = ClipRewardWrapper(
         env,
