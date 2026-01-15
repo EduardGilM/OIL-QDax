@@ -426,21 +426,9 @@ class DCRLEmitter(Emitter):
 
         # Get previous descriptors from replay buffer (initially they don't exist)
         # For first iteration, use zeros for desc_prime
-        # Check if buffer has any valid data (not all NaN)
-        has_buffer_data = jnp.any(~jnp.isnan(emitter_state.replay_buffer.data[0]))
-
-        # Get prev_desc_prime from buffer or use zeros
-        # Use the last transition's desc_prime from buffer if available
-        prev_desc_prime = jax.lax.cond(
-            has_buffer_data,
-            # If buffer has data, use the last transition's desc_prime
-            lambda _: emitter_state.replay_buffer.data[
-                emitter_state.replay_buffer.current_position - 1, -1, :
-            ],
-            # Otherwise, use zeros
-            lambda _: jnp.zeros((1, descriptors.shape[-1])),
-            None,
-        )
+        # Since we can't safely access replay_buffer inside cond,
+        # initialize desc_prime with zeros for the first iteration
+        prev_desc_prime = jnp.zeros((1, descriptors.shape[-1]))
 
         desc_prime = jnp.concatenate(
             [
