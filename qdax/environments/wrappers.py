@@ -10,7 +10,6 @@ from brax.v1 import jumpy as jp
 from brax.v1.envs import Env, State, Wrapper
 import pcax
 from qdax.environments.lz76 import LZ76_jax, action_to_binary_padded
-import annax
 
 
 class CompletedEvalMetrics(flax.struct.PyTreeNode):
@@ -129,40 +128,61 @@ class OffsetRewardWrapper(Wrapper):
         state = self.env.step(state, action)
         return state.replace(reward=state.reward + self._offset)
 
+
 def k_l_entropy(data, k=1):
     """Calculate entropy estimate using k-nearest neighbors with pure JAX.
-    
+
+    Uses jnp.cdist for efficient distance computation, avoiding nested pmap issues.
+
     Args:
         data: array of shape (n_samples, n_dimensions)
         k: number of neighbors (excluding self)
-    
+
     Returns:
         entropy: float, entropy estimate
     """
     n_samples, n_dimensions = data.shape
 
-    vol_hypersphere = jnp.pi**(n_dimensions/2) / gamma(n_dimensions/2 + 1)
+    vol_hypersphere = jnp.pi ** (n_dimensions / 2) / gamma(n_dimensions / 2 + 1)
 
-    index = annax.Index(data)
-    distances, _ = index.search(data, k=k + 1)
-    epsilon = distances[:, k]
-    entropy = (n_dimensions * jnp.mean(jnp.log(epsilon + 1e-10)) + 
-               jnp.log(vol_hypersphere + 1e-10) + 0.577216 + jnp.log(n_samples-1))
-    
+    # Compute pairwise distances using jnp.cdist
+    # This avoids nested pmap issues with annax.Index
+    distances = jnp.cdist(data, data)
+
+    # For each point, get distances to k+1 nearest neighbors (including itself)
+    # We use jnp.argsort to find nearest neighbors
+    sorted_indices = jnp.argsort(distances, axis=1)
+    k_nearest_indices = sorted_indices[:, : k + 1]
+
+    # Get distances to k+1 nearest neighbors (including self at distance 0)
+    epsilon = jnp.take_along_axis(
+        distances,
+        k_nearest_indices[:, k],  # k-th nearest (0-indexed, so position k)
+        axis=1,
+    )
+
+    entropy = (
+        n_dimensions * jnp.mean(jnp.log(epsilon + 1e-10))
+        + jnp.log(vol_hypersphere + 1e-10)
+        + 0.577216
+        + jnp.log(n_samples - 1)
+    )
+
     return jnp.float32(entropy)
+
 
 def extract_single_column(matrix, col_idx):
     """Extract a single column from a matrix in a JAX-safe way.
-    
+
     Args:
         matrix: Input matrix with shape [rows, cols]
         col_idx: Column index to extract
-    
+
     Returns:
         A column vector with shape [rows, 1]
     """
     rows, cols = matrix.shape
-    
+
     def get_element(row_idx):
         element = lax.dynamic_slice(matrix[row_idx], (col_idx,), (1,))
         return element[0]
@@ -171,21 +191,23 @@ def extract_single_column(matrix, col_idx):
 
     return column_data.reshape(-1, 1)
 
+
 def exclude_column(matrix, col_idx):
     """Create a new matrix excluding the specified column in a JAX-safe way.
-    
+
     Args:
         matrix: Input matrix with shape [rows, cols]
         col_idx: Column index to exclude
-        
+
     Returns:
         A matrix with shape [rows, cols-1] with col_idx removed
     """
     rolled_matrix = jnp.roll(matrix, shift=-col_idx, axis=1)
 
-    result_matrix = rolled_matrix[:, 1:] 
+    result_matrix = rolled_matrix[:, 1:]
 
     return result_matrix
+
 
 NORMALIZED_LZ76 = {
     "ant": (237, 378),
@@ -211,13 +233,14 @@ NORMALIZED_OI = {
     "rastriginenv": (70, 90),
 }
 
+
 class OILWrapper(Wrapper):
     """Wraps gym environments to add both Lempel-Ziv complexity and O-Information of the observations."""
 
     def __init__(self, env: Env, episode_length: int = 1000, **kwargs):
         super().__init__(env)
         self.episode_length = episode_length
-        
+
     @property
     def behavior_descriptor_length(self):
         return 2
@@ -225,21 +248,23 @@ class OILWrapper(Wrapper):
     @property
     def state_descriptor_length(self) -> int:
         return self.behavior_descriptor_length
-    
+
     @property
     def behavior_descriptor_limits(self):
         return (jnp.array([0.0, -1.0]), jnp.array([1.0, 1.0]))
 
     def reset(self, rng: jp.ndarray) -> State:
         state = self.env.reset(rng)
-        
+
         obs_dim = state.obs.shape[0]
         is_ant = self.env.__class__.__name__.lower() == "ant"
 
         if is_ant:
             obs_dim = min(obs_dim, 27)
 
-        state.info["obs_sequence"] = jnp.zeros((self.episode_length, obs_dim), dtype=jnp.float32)
+        state.info["obs_sequence"] = jnp.zeros(
+            (self.episode_length, obs_dim), dtype=jnp.float32
+        )
         state.info["current_step"] = 0
         state.info["lz76_complexity"] = jnp.float32(0)
         state.info["o_info_value"] = jnp.float32(0)
@@ -247,23 +272,22 @@ class OILWrapper(Wrapper):
         return state
 
     def step(self, state: State, action: jp.ndarray) -> State:
-        state = self.env.step(state, action)    
-        
+        state = self.env.step(state, action)
+
         obs = state.obs
         obs_dim = state.info["obs_sequence"].shape[1]
-        
+
         obs = obs[:obs_dim]
-        
+
         current_step = state.info["current_step"]
         obs_sequence = state.info["obs_sequence"].at[current_step, :].set(obs)
-        
+
         is_final_step = current_step == (self.episode_length - 2)
         complexities = jnp.float32(state.info["lz76_complexity"])
         o_info_values = jnp.float32(state.info["o_info_value"])
         state_descriptor = state.info["state_descriptor"]
-        
-        def compute_final_metrics(obs_seq):
 
+        def compute_final_metrics(obs_seq):
             indices = jnp.linspace(0, 28, 10).astype(jnp.int32)
             complexity_obs_seq = obs_seq[indices]
 
@@ -285,40 +309,46 @@ class OILWrapper(Wrapper):
 
             lz76_min, lz76_max = NORMALIZED_LZ76[env_name]
             oi_min, oi_max = NORMALIZED_OI[env_name]
-            
-            normalized_complexity = jnp.clip((raw_complexity - lz76_min) / (lz76_max - lz76_min), 0.0, 1.0)
-            normalized_o_info = jnp.clip(2.0 * ((raw_o_info - oi_min) / (oi_max - oi_min)) - 1.0, -1.0, 1.0)
 
-            #jax.debug.print("Raw LZ complexity: {x}", x=raw_complexity)
-            #jax.debug.print("Raw OI: {x}", x=raw_o_info)
-            #jax.debug.print("Normalized complexity: {x}", x=normalized_complexity)
-            #jax.debug.print("Normalized o-info: {x}", x=normalized_o_info)
-            
-            return raw_complexity, raw_o_info, jnp.array([normalized_complexity, normalized_o_info])
-        
+            normalized_complexity = jnp.clip(
+                (raw_complexity - lz76_min) / (lz76_max - lz76_min), 0.0, 1.0
+            )
+            normalized_o_info = jnp.clip(
+                2.0 * ((raw_o_info - oi_min) / (oi_max - oi_min)) - 1.0, -1.0, 1.0
+            )
+
+            # jax.debug.print("Raw LZ complexity: {x}", x=raw_complexity)
+            # jax.debug.print("Raw OI: {x}", x=raw_o_info)
+            # jax.debug.print("Normalized complexity: {x}", x=normalized_complexity)
+            # jax.debug.print("Normalized o-info: {x}", x=normalized_o_info)
+
+            return (
+                raw_complexity,
+                raw_o_info,
+                jnp.array([normalized_complexity, normalized_o_info]),
+            )
+
         def keep_previous(_):
             return complexities, o_info_values, state_descriptor
-        
-        
+
         complexities, o_info_values, state_descriptor = jax.lax.cond(
-            is_final_step,
-            compute_final_metrics,
-            keep_previous,
-            obs_sequence
+            is_final_step, compute_final_metrics, keep_previous, obs_sequence
         )
 
-        state.info.update({
-            "obs_sequence": obs_sequence,
-            "current_step": current_step + 1,
-            "lz76_complexity": complexities,
-            "o_info_value": o_info_values,
-            "state_descriptor": state_descriptor
-        })
+        state.info.update(
+            {
+                "obs_sequence": obs_sequence,
+                "current_step": current_step + 1,
+                "lz76_complexity": complexities,
+                "o_info_value": o_info_values,
+                "state_descriptor": state_descriptor,
+            }
+        )
 
-        #jax.debug.print("State info: {x}", x=state.info["state_descriptor"])
+        # jax.debug.print("State info: {x}", x=state.info["state_descriptor"])
 
         return state
-    
+
     def _compute_o_information(self, obs_sequence):
         """Compute O-Information with fully optimized JAX operations."""
         n_samples, n_vars = obs_sequence.shape
@@ -329,14 +359,18 @@ class OILWrapper(Wrapper):
         def compute_h_terms(j, obs_sequence):
             column_j = extract_single_column(obs_sequence, j)
             h_xj = k_l_entropy(column_j, 1)
-            
+
             data_excl_j = exclude_column(obs_sequence, j)
-            h_excl_j = k_l_entropy(data_excl_j, max(k-1, 1))
-            
+            h_excl_j = k_l_entropy(data_excl_j, max(k - 1, 1))
+
             term_result = h_xj - h_excl_j
 
             return term_result
-    
-        sum_term = jnp.sum(jax.vmap(compute_h_terms, in_axes=(0, None))(jnp.arange(n_vars), obs_sequence))
+
+        sum_term = jnp.sum(
+            jax.vmap(compute_h_terms, in_axes=(0, None))(
+                jnp.arange(n_vars), obs_sequence
+            )
+        )
 
         return (n_vars - 2) * h_joint + sum_term
