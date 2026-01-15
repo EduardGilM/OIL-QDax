@@ -424,26 +424,9 @@ class DCRLEmitter(Emitter):
         transitions = extra_scores["transitions"]
         episode_length = transitions.obs.shape[1]
 
-        # Get previous descriptors from replay buffer (initially they don't exist)
-        # For the first iteration, use zeros for desc_prime
-        if (
-            emitter_state.replay_buffer is not None
-            and emitter_state.replay_buffer.size > 0
-        ):
-            # Sample one transition to get desc_prime from buffer
-            key, subkey = jax.random.split(emitter_state.key)
-            sample_transition, _ = emitter_state.replay_buffer.sample(subkey, 1)
-            # desc_prime from the sampled transition (first element)
-            prev_desc_prime = jax.tree_util.tree_map(
-                lambda x: x[0, -1, :], sample_transition
-            )
-        else:
-            # For first iteration, use zeros
-            prev_desc_prime = jnp.zeros((1, descriptors.shape[-1]))
-
         desc_prime = jnp.concatenate(
             [
-                prev_desc_prime,
+                extra_scores["desc_prime"],
                 descriptors[
                     self._config.dcrl_batch_size + self._config.ai_batch_size :
                 ],
@@ -581,6 +564,7 @@ class DCRLEmitter(Emitter):
         transitions: DCRLTransition,
         key: RNGKey,
     ) -> Tuple[Params, Params, Params, RNGKey]:
+
         # compute loss and gradients
         key, subkey = jax.random.split(key)
         critic_gradient = jax.grad(self._critic_loss_fn)(
@@ -616,6 +600,7 @@ class DCRLEmitter(Emitter):
         critic_params: Params,
         transitions: DCRLTransition,
     ) -> Tuple[optax.OptState, Params, Params]:
+
         # Update greedy actor
         policy_gradient = jax.grad(self._actor_loss_fn)(
             actor_params,
@@ -719,13 +704,10 @@ class DCRLEmitter(Emitter):
             ), ()
 
         (
-            (
-                emitter_state,
-                policy_params,
-                policy_opt_state,
-            ),
-            _,
-        ) = jax.lax.scan(
+            emitter_state,
+            policy_params,
+            policy_opt_state,
+        ), _ = jax.lax.scan(
             scan_train_policy,
             (emitter_state, policy_params, policy_opt_state),
             transitions,
@@ -770,6 +752,7 @@ class DCRLEmitter(Emitter):
         policy_params: Params,
         transitions: DCRLTransition,
     ) -> Tuple[optax.OptState, Params]:
+
         # compute loss
         policy_gradient = jax.grad(self._policy_loss_fn)(
             policy_params,
