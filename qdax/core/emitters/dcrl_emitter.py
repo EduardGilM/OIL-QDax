@@ -424,21 +424,7 @@ class DCRLEmitter(Emitter):
         transitions = extra_scores["transitions"]
         episode_length = transitions.obs.shape[1]
 
-        # Get previous descriptors from replay buffer (initially they don't exist)
-        # For first iteration, use zeros for desc_prime
-        # Since we can't safely access replay_buffer inside cond,
-        # initialize desc_prime with zeros for the first iteration
-        prev_desc_prime = jnp.zeros((1, descriptors.shape[-1]))
-
-        desc_prime = jnp.concatenate(
-            [
-                prev_desc_prime,
-                descriptors[
-                    self._config.dcrl_batch_size + self._config.ai_batch_size :
-                ],
-            ],
-            axis=0,
-        )
+        desc_prime = jnp.zeros((1, descriptors.shape[-1]))
         desc_prime = jnp.repeat(desc_prime[:, jnp.newaxis, :], episode_length, axis=1)
         desc = jnp.repeat(descriptors[:, jnp.newaxis, :], episode_length, axis=1)
 
