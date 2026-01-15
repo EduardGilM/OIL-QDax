@@ -153,24 +153,10 @@ def run_dcrlme_sphere_oil_distributed(
     random_key, subkey = jax.random.split(random_key)
     keys = jax.random.split(subkey, num=total_batch_size)
 
-    # Reshape keys for distributed execution
-    keys = keys.reshape((num_devices, -1))
-
+    # For distributed execution, data should NOT have device dimension here
+    # The distributed_init_fn will add device dimension via jax.pmap
     fake_batch_obs = jnp.zeros(shape=(total_batch_size, env.observation_size))
     init_params = jax.vmap(policy_network.init)(keys.flatten(), fake_batch_obs)
-
-    # Reshape init_params for distributed execution
-    def reshape_for_devices(params, num_devices):
-        """Reshape params to have a leading device dimension."""
-
-        def split_batch(x):
-            batch_size = x.shape[0]
-            batch_per_device = batch_size // num_devices
-            return x.reshape((num_devices, batch_per_device) + x.shape[1:])
-
-        return jax.tree.map(split_batch, params)
-
-    init_params = reshape_for_devices(init_params, num_devices)
 
     # Define function to play a step with policy in environment
     def play_step_fn(
