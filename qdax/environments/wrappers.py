@@ -157,7 +157,7 @@ def k_l_entropy(data, k=1):
     # Get distances to k+1 nearest neighbors (including self at distance 0)
     epsilon = jnp.take_along_axis(
         distances,
-        k_nearest_indices[:, k],  # k-th nearest (0-indexed, so position k)
+        k_nearest_indices[:, k],  # k-th nearest (0-indexed,so position k)
         axis=1,
     )
 
