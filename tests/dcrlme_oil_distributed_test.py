@@ -264,7 +264,7 @@ def run_dcrlme_oil_distributed_test(
     # Run distributed initialization
     # The pmap in distributed_init_fn will automatically distribute params and keys across devices
     repertoire, emitter_state, random_keys = distributed_init_fn(
-        genotypes=init_params_per_device, random_key=device_keys
+        init_params_per_device, device_keys
     )
 
     # Run distributed initialization
