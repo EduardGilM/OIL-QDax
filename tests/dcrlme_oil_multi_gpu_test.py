@@ -188,8 +188,6 @@ def run_dcrlme_oil_multi_gpu(
             behavior_descriptor_extractor=bd_extraction_fn,
         )
 
-    scoring_fn = scoring_fn
-
     # Get minimum reward value to make sure qd_score are positive
     reward_offset = environments.reward_offset.get(env_name, 0.0)
 
