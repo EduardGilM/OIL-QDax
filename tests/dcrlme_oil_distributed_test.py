@@ -196,7 +196,7 @@ def run_dcrlme_oil_distributed_test(
     )
 
     # Get minimum reward value to make sure qd_score are positive
-    reward_offset = environments.reward_offset[env_name]
+    reward_offset = environments.reward_offset.get(env_name, 0.0)
 
     # Define a metrics function
     metrics_function = functools.partial(
