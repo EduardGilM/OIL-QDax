@@ -425,15 +425,15 @@ class DCRLEmitter(Emitter):
         episode_length = transitions.obs.shape[1]
 
         # Get previous descriptors from replay buffer (initially they don't exist)
-        # For first iteration, use zeros for desc_prime
+        # For the first iteration, use zeros for desc_prime
         if (
             emitter_state.replay_buffer is not None
-            and emitter_state.replay_buffer.current_size > 0
+            and emitter_state.replay_buffer.size > 0
         ):
             # Sample one transition to get desc_prime from buffer
             key, subkey = jax.random.split(emitter_state.key)
             sample_transition, _ = emitter_state.replay_buffer.sample(subkey, 1)
-            # desc_prime from sampled transition (first element)
+            # desc_prime from the sampled transition (first element)
             prev_desc_prime = jax.tree_util.tree_map(
                 lambda x: x[0, -1, :], sample_transition
             )
