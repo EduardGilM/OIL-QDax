@@ -13,7 +13,7 @@ from qdax.environments.base_wrappers import QDEnv, StateDescriptorResetWrapper
 from qdax.environments.bd_extractors import (
     get_feet_contact_proportion,
     get_final_xy_position,
-    get_oil_descriptors
+    get_oil_descriptors,
 )
 from qdax.environments.exploration_wrappers import MazeWrapper, TrapWrapper
 from qdax.environments.humanoidtrap import HumanoidTrap
@@ -44,15 +44,15 @@ reward_offset = {
     "hopper_uni": 0.9,
     "walker2d_uni": 1.413,
     "halfcheetah_oi": 0.0,
-    "hopper_oi": 0.0,        
-    "walker2d_oi": 0.0,    
-    "ant_oi": 0.0,          
-    "humanoid_oi": 0.0,      
-    "pointmaze_oi": 0.0,  
+    "hopper_oi": 0.0,
+    "walker2d_oi": 0.0,
+    "ant_oi": 0.0,
+    "humanoid_oi": 0.0,
+    "pointmaze_oi": 0.0,
     "grasp_oi": 0.0,
     "fetch_oi": 0.0,
-    "sphere_oi": 0.0,
-    "rastrigin_oi": 0.0,
+    "sphere_oil": 0.0,
+    "rastrigin_oil": 0.0,
 }
 
 behavior_descriptor_extractor = {
@@ -154,11 +154,6 @@ _qdax_custom_envs = {
         "wrappers": [OILWrapper],
         "kwargs": [{}],
     },
-    "halfcheetah_oil": {
-        "env": "halfcheetah",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
     "hopper_oil": {
         "env": "hopper",
         "wrappers": [OILWrapper],
@@ -189,10 +184,31 @@ _qdax_custom_envs = {
         "wrappers": [OILWrapper],
         "kwargs": [{}],
     },
+    "halfcheetah_oil": {
+        "env": "halfcheetah",
+        "wrappers": [OILWrapper],
+        "kwargs": [{}],
+    },
+    "walker2d_oil": {
+        "env": "walker2d",
+        "wrappers": [OILWrapper],
+        "kwargs": [{}],
+    },
+    "grasp_oil": {
+        "env": "grasp",
+        "wrappers": [OILWrapper],
+        "kwargs": [{}],
+    },
+    "fetch_oil": {
+        "env": "fetch",
+        "wrappers": [OILWrapper],
+        "kwargs": [{}],
+    },
 }
 
 print("Registered environments:")
 print(_qdax_custom_envs)
+
 
 def create(
     env_name: str,
@@ -231,7 +247,11 @@ def create(
         else:
             kwargs_list = qdax_wrappers_kwargs
         for wrapper, kwargs in zip(wrappers, kwargs_list):  # type: ignore
-            if wrapper in [FeetContactWrapper, XYPositionWrapper, NoForwardRewardWrapper]:
+            if wrapper in [
+                FeetContactWrapper,
+                XYPositionWrapper,
+                NoForwardRewardWrapper,
+            ]:
                 env = wrapper(env, base_env_name, **kwargs)
             else:
                 env = wrapper(env, **kwargs)
