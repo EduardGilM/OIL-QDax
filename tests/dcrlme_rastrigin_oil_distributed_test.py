@@ -156,7 +156,7 @@ def run_dcrlme_rastrigin_oil_distributed(
     # For distributed execution, data should NOT have device dimension here
     # The distributed_init_fn will add device dimension via jax.pmap
     fake_batch_obs = jnp.zeros(shape=(total_batch_size, env.observation_size))
-    init_params = jax.vmap(policy_network.init)(keys.flatten(), fake_batch_obs)
+    init_params = jax.vmap(policy_network.init)(keys, fake_batch_obs)
 
     # Define function to play a step with policy in environment
     def play_step_fn(
