@@ -145,9 +145,10 @@ def k_l_entropy(data, k=1):
 
     vol_hypersphere = jnp.pi ** (n_dimensions / 2) / gamma(n_dimensions / 2 + 1)
 
-    # Compute pairwise distances using jnp.cdist
-    # This avoids nested pmap issues with annax.Index
-    distances = jnp.cdist(data, data)
+    # Compute pairwise distances using JAX-compatible broadcasting
+    # Equivalent to jnp.cdist(data, data) for Euclidean distance
+    diff = data[:, jnp.newaxis, :] - data[jnp.newaxis, :, :]
+    distances = jnp.linalg.norm(diff, axis=-1)
 
     # For each point, get distances to k+1 nearest neighbors (including itself)
     # We use jnp.argsort to find nearest neighbors
