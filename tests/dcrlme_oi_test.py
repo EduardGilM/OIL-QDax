@@ -268,7 +268,7 @@ def run_dcrlme_oi_test(env_name: str = "ant_oil", num_iterations: int = 10) -> N
 @pytest.mark.parametrize(
     "env_name",
     [
-        "halfcheetah_oi",
+        "halfcheetah_oil",
     ],
 )
 def test_dcrlme_oi(env_name: str) -> None:
@@ -283,7 +283,7 @@ def test_dcrlme_oi(env_name: str) -> None:
 
 if __name__ == "__main__":
     # Run with small number of iterations for testing
-    repertoire = run_dcrlme_oi_test("ant_oil", num_iterations=1000)
+    repertoire = run_dcrlme_oi_test("halfcheetah_oil", num_iterations=5)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
     repertoire_path = f"./repertoires/dcrlm_oil/{timestamp}/"
     os.makedirs(repertoire_path, exist_ok=True)

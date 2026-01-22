@@ -30,7 +30,7 @@ def run_dcrlme_sphere_oi_test(num_iterations: int = 10) -> None:
     print(f"Num devices: {jax.device_count()}")
     seed = 42
 
-    env_name = "sphere_oi"
+    env_name = "sphere_oil"
     num_dimensions = 3
     episode_length = 30
     minval = -5.12
@@ -292,7 +292,7 @@ def test_dcrlme_sphere_oi(num_iterations: int) -> None:
     repertoire = run_dcrlme_sphere_oi_test(num_iterations=50)
     assert repertoire is not None
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    repertoire_path = f"./repertoires/dcrlm_sphere_oi/{timestamp}/"
+    repertoire_path = f"./repertoires/dcrlm_sphere_oil/{timestamp}/"
     os.makedirs(repertoire_path, exist_ok=True)
     repertoire.save(path=repertoire_path)
 
@@ -301,7 +301,7 @@ if __name__ == "__main__":
     # Run with more iterations for actual experiments
     repertoire = run_dcrlme_sphere_oi_test(num_iterations=100)
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    repertoire_path = f"./repertoires/dcrlm_sphere_oi/{timestamp}/"
+    repertoire_path = f"./repertoires/dcrlm_sphere_oil/{timestamp}/"
     os.makedirs(repertoire_path, exist_ok=True)
     repertoire.save(path=repertoire_path)
     print(f"Repertoire saved to {repertoire_path}")

@@ -289,10 +289,10 @@ class OILWrapper(Wrapper):
             normalized_complexity = jnp.clip((raw_complexity - lz76_min) / (lz76_max - lz76_min), 0.0, 1.0)
             normalized_o_info = jnp.clip(2.0 * ((raw_o_info - oi_min) / (oi_max - oi_min)) - 1.0, -1.0, 1.0)
 
-            #jax.debug.print("Raw LZ complexity: {x}", x=raw_complexity)
-            #jax.debug.print("Raw OI: {x}", x=raw_o_info)
-            #jax.debug.print("Normalized complexity: {x}", x=normalized_complexity)
-            #jax.debug.print("Normalized o-info: {x}", x=normalized_o_info)
+            jax.debug.print("Raw LZ complexity: {x}", x=raw_complexity)
+            jax.debug.print("Raw OI: {x}", x=raw_o_info)
+            jax.debug.print("Normalized complexity: {x}", x=normalized_complexity)
+            jax.debug.print("Normalized o-info: {x}", x=normalized_o_info)
             
             return raw_complexity, raw_o_info, jnp.array([normalized_complexity, normalized_o_info])
         
