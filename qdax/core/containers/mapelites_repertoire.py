@@ -4,6 +4,7 @@ algorithm as well as several variants."""
 
 from __future__ import annotations
 
+import os
 import warnings
 from functools import partial
 from typing import Callable, List, Optional, Tuple, Union
@@ -153,12 +154,22 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
             is (num_centroids, num_descriptors).
         centroids: an array that contains the centroids of the tessellation. The array
             shape is (num_centroids, num_descriptors).
+        modification_counts: an array that contains how many times each cell has been
+            written to in order to insert or replace a genotype. The array shape is
+            (num_centroids,).
     """
 
     genotypes: Genotype
     fitnesses: Fitness
     descriptors: Descriptor
     centroids: Centroid
+    modification_counts: Optional[jnp.ndarray] = None
+
+    def _modification_counts_or_default(self) -> jnp.ndarray:
+        """Return cell modification counts, defaulting to zeros for old archives."""
+        if self.modification_counts is None:
+            return jnp.zeros_like(self.fitnesses, dtype=jnp.int32)
+        return self.modification_counts
 
     def save(self, path: str = "./") -> None:
         """Saves the repertoire on disk in the form of .npy files.
@@ -183,6 +194,10 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
         jnp.save(path + "fitnesses.npy", self.fitnesses)
         jnp.save(path + "descriptors.npy", self.descriptors)
         jnp.save(path + "centroids.npy", self.centroids)
+        jnp.save(
+            path + "modification_counts.npy",
+            self._modification_counts_or_default(),
+        )
 
     @classmethod
     def load(cls, reconstruction_fn: Callable, path: str = "./") -> MapElitesRepertoire:
@@ -203,12 +218,18 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
         fitnesses = jnp.load(path + "fitnesses.npy")
         descriptors = jnp.load(path + "descriptors.npy")
         centroids = jnp.load(path + "centroids.npy")
+        modification_counts_path = path + "modification_counts.npy"
+        if os.path.exists(modification_counts_path):
+            modification_counts = jnp.load(modification_counts_path)
+        else:
+            modification_counts = jnp.zeros_like(fitnesses, dtype=jnp.int32)
 
         return cls(
             genotypes=genotypes,
             fitnesses=fitnesses,
             descriptors=descriptors,
             centroids=centroids,
+            modification_counts=modification_counts,
         )
 
     @partial(jax.jit, static_argnames=("num_samples",))
@@ -295,6 +316,7 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
 
         batch_of_indices = get_cells_indices(batch_of_descriptors, self.centroids)
         batch_of_indices = jnp.expand_dims(batch_of_indices, axis=-1)
+        cell_indices = batch_of_indices.squeeze(axis=-1)
         batch_of_fitnesses = jnp.expand_dims(batch_of_fitnesses, axis=-1)
 
         num_centroids = self.centroids.shape[0]
@@ -325,6 +347,17 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
             addition_condition, batch_of_indices, num_centroids
         )
 
+        # Count a cell update once per add call, even if several candidates target it.
+        modification_increments = jax.ops.segment_sum(
+            addition_condition.astype(jnp.int32).squeeze(axis=-1),
+            cell_indices.astype(jnp.int32),
+            num_segments=num_centroids,
+        )
+        modification_increments = jnp.clip(modification_increments, 0, 1)
+        new_modification_counts = (
+            self._modification_counts_or_default() + modification_increments
+        )
+
         # create new repertoire
         new_repertoire_genotypes = jax.tree_util.tree_map(
             lambda repertoire_genotypes, new_genotypes: repertoire_genotypes.at[
@@ -347,6 +380,7 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
             fitnesses=new_fitnesses,
             descriptors=new_descriptors,
             centroids=self.centroids,
+            modification_counts=new_modification_counts,
         )
 
     @classmethod
@@ -438,4 +472,5 @@ class MapElitesRepertoire(flax.struct.PyTreeNode):
             fitnesses=default_fitnesses,
             descriptors=default_descriptors,
             centroids=centroids,
+            modification_counts=jnp.zeros(shape=num_centroids, dtype=jnp.int32),
         )

@@ -190,11 +190,11 @@ def exclude_column(matrix, col_idx):
 NORMALIZED_LZ76 = {
     "ant": (237, 378),
     "halfcheetah": (250, 270),
-    "walker2d": (-538.19, 538.19),
-    "hopper": (-538.19, 538.19),
-    "humanoid": (-538.19, 538.19),
-    "grasp": (1112, 1088),
-    "fetch": (950, 970),
+    "walker2d": (-538.19, 538.19), # Placeholder, need to compute
+    "hopper": (-538.19, 538.19), # Placeholder, need to compute
+    "humanoid": (-538.19, 538.19), # Placeholder, need to compute
+    "grasp": (1112, 1088), # Placeholder, need to compute
+    "fetch": (950, 970), # Placeholder, need to compute
     "sphereenv": (90, 130),
     "rastriginenv": (90, 130),
 }
@@ -202,11 +202,11 @@ NORMALIZED_LZ76 = {
 NORMALIZED_OI = {
     "ant": (-1457, 1751),
     "halfcheetah": (-1077, 1271),
-    "walker2d": (-538.19, 538.19),
-    "hopper": (-538.19, 538.19),
-    "humanoid": (-538.19, 538.19),
-    "grasp": (-800, 1462),
-    "fetch": (-600, 1300),
+    "walker2d": (-538.19, 538.19), # Placeholder, need to compute
+    "hopper": (-122, 116), # Placeholder, need to compute
+    "humanoid": (-538.19, 538.19), # Placeholder, need to compute
+    "grasp": (-800, 1462), # Placeholder, need to compute
+    "fetch": (-600, 1300), # Placeholder, need to compute
     "sphereenv": (70, 90),
     "rastriginenv": (70, 90),
 }
