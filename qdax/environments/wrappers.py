@@ -1,16 +1,17 @@
-import math
+from functools import partial
 from typing import Dict, Optional, Tuple
 import jax.lax as lax
-from jax.scipy.special import digamma, gamma
+from jax.scipy.special import gamma
 
 import flax.struct
 import jax
 import jax.numpy as jnp
 from brax.v1 import jumpy as jp
 from brax.v1.envs import Env, State, Wrapper
-import pcax
-from qdax.environments.lz76 import LZ76_jax, action_to_binary_padded
-import annax
+from qdax.environments.lz76 import (
+    LZ76_jax,
+    quantize_observation_bins,
+)
 
 
 class CompletedEvalMetrics(flax.struct.PyTreeNode):
@@ -129,6 +130,17 @@ class OffsetRewardWrapper(Wrapper):
         state = self.env.step(state, action)
         return state.replace(reward=state.reward + self._offset)
 
+@partial(jax.jit, static_argnames=("k",))
+def _kth_neighbor_index(data: jnp.ndarray, k: int) -> jnp.ndarray:
+    """Match the previous annax search output ordering without host transfers."""
+    similarities = jnp.matmul(data, data.T)
+    candidate_indices = jnp.argpartition(similarities, -(k + 1), axis=-1)[..., -(k + 1) :]
+    candidate_values = jnp.take_along_axis(similarities, candidate_indices, axis=-1)
+    sorted_positions = jnp.argsort(-candidate_values, axis=-1)
+    sorted_indices = jnp.take_along_axis(candidate_indices, sorted_positions, axis=-1)
+    return sorted_indices[:, k].astype(data.dtype)
+
+
 def k_l_entropy(data, k=1):
     """Calculate entropy estimate using k-nearest neighbors with pure JAX.
     
@@ -142,10 +154,7 @@ def k_l_entropy(data, k=1):
     n_samples, n_dimensions = data.shape
 
     vol_hypersphere = jnp.pi**(n_dimensions/2) / gamma(n_dimensions/2 + 1)
-
-    index = annax.Index(data)
-    distances, _ = index.search(data, k=k + 1)
-    epsilon = distances[:, k]
+    epsilon = _kth_neighbor_index(data, k)
     entropy = (n_dimensions * jnp.mean(jnp.log(epsilon + 1e-10)) + 
                jnp.log(vol_hypersphere + 1e-10) + 0.577216 + jnp.log(n_samples-1))
     
@@ -189,7 +198,7 @@ def exclude_column(matrix, col_idx):
 
 NORMALIZED_LZ76 = {
     "ant": (237, 378),
-    "halfcheetah": (250, 270),
+    "halfcheetah": (39, 53),
     "walker2d": (-538.19, 538.19), # Placeholder, need to compute
     "hopper": (-538.19, 538.19), # Placeholder, need to compute
     "humanoid": (-538.19, 538.19), # Placeholder, need to compute
@@ -201,7 +210,7 @@ NORMALIZED_LZ76 = {
 
 NORMALIZED_OI = {
     "ant": (-1457, 1751),
-    "halfcheetah": (-1077, 1271),
+    "halfcheetah": (-325, 250),
     "walker2d": (-538.19, 538.19), # Placeholder, need to compute
     "hopper": (-122, 116), # Placeholder, need to compute
     "humanoid": (-538.19, 538.19), # Placeholder, need to compute
@@ -211,12 +220,89 @@ NORMALIZED_OI = {
     "rastriginenv": (70, 90),
 }
 
+LZ_NUM_BINS = 64
+LZ_NUM_SAMPLES = 100
+DEFAULT_LZ_OBS_LIMIT = 20.0
+LZ_OBSERVATION_BOUNDS = {
+    "halfcheetah": (
+        jnp.array(
+            [
+                -2.0,
+                -1.0,
+                -1.0,
+                -4.0,
+                -4.0,
+                -4.0,
+                -4.0,
+                -4.0,
+                -4.0,
+                -8.0,
+                -8.0,
+                -15.0,
+                -40.0,
+                -80.0,
+                -120.0,
+                -50.0,
+                -120.0,
+                -150.0,
+            ],
+            dtype=jnp.float32,
+        ),
+        jnp.array(
+            [
+                2.0,
+                1.0,
+                1.0,
+                4.0,
+                4.0,
+                4.0,
+                4.0,
+                4.0,
+                4.0,
+                8.0,
+                8.0,
+                15.0,
+                40.0,
+                80.0,
+                120.0,
+                50.0,
+                120.0,
+                150.0,
+            ],
+            dtype=jnp.float32,
+        ),
+    ),
+}
+
+
+def _get_lz_observation_bounds(
+    env_name: str, obs_dim: int
+) -> Tuple[jnp.ndarray, jnp.ndarray]:
+    bounds = LZ_OBSERVATION_BOUNDS.get(env_name)
+    if bounds is not None and bounds[0].shape[0] == obs_dim:
+        return bounds
+
+    obs_limit = jnp.full((obs_dim,), DEFAULT_LZ_OBS_LIMIT, dtype=jnp.float32)
+    return -obs_limit, obs_limit
+
+
+def _sample_lz_observations(obs_sequence: jnp.ndarray) -> jnp.ndarray:
+    num_samples = min(obs_sequence.shape[0], LZ_NUM_SAMPLES)
+    indices = jnp.linspace(0, obs_sequence.shape[0] - 1, num_samples).astype(jnp.int32)
+    return obs_sequence[indices]
+
 class OILWrapper(Wrapper):
     """Wraps gym environments to add both Lempel-Ziv complexity and O-Information of the observations."""
 
     def __init__(self, env: Env, episode_length: int = 1000, **kwargs):
         super().__init__(env)
         self.episode_length = episode_length
+        self._debug = kwargs.pop("debug", False)
+
+        unwrapped_env = env
+        while hasattr(unwrapped_env, "env"):
+            unwrapped_env = unwrapped_env.env
+        self._base_env_name = unwrapped_env.__class__.__name__.lower()
         
     @property
     def behavior_descriptor_length(self):
@@ -239,7 +325,10 @@ class OILWrapper(Wrapper):
         if is_ant:
             obs_dim = min(obs_dim, 27)
 
+        lz_obs_min, lz_obs_max = _get_lz_observation_bounds(self._base_env_name, obs_dim)
         state.info["obs_sequence"] = jnp.zeros((self.episode_length, obs_dim), dtype=jnp.float32)
+        state.info["lz_obs_min"] = lz_obs_min
+        state.info["lz_obs_max"] = lz_obs_max
         state.info["current_step"] = 0
         state.info["lz76_complexity"] = jnp.float32(0)
         state.info["o_info_value"] = jnp.float32(0)
@@ -261,14 +350,20 @@ class OILWrapper(Wrapper):
         complexities = jnp.float32(state.info["lz76_complexity"])
         o_info_values = jnp.float32(state.info["o_info_value"])
         state_descriptor = state.info["state_descriptor"]
+        lz_obs_min = state.info["lz_obs_min"]
+        lz_obs_max = state.info["lz_obs_max"]
         
         def compute_final_metrics(obs_seq):
-
-            indices = jnp.linspace(0, 28, 10).astype(jnp.int32)
-            complexity_obs_seq = obs_seq[indices]
-
-            obs_binary = action_to_binary_padded(complexity_obs_seq)
-            raw_complexity = jnp.float32(LZ76_jax(obs_binary))
+            complexity_obs_seq = _sample_lz_observations(obs_seq)
+            obs_bins = quantize_observation_bins(
+                complexity_obs_seq,
+                lz_obs_min,
+                lz_obs_max,
+                LZ_NUM_BINS,
+            )
+            raw_complexity = jnp.float32(
+                jnp.mean(jax.vmap(LZ76_jax, in_axes=1, out_axes=0)(obs_bins))
+            )
             min_samples_for_o_info = 12
             raw_o_info = lax.cond(
                 obs_seq.shape[0] >= min_samples_for_o_info,
@@ -277,22 +372,17 @@ class OILWrapper(Wrapper):
                 obs_seq,
             )
 
-            # get the base environment
-            unwrapped_env = self.env
-            while hasattr(unwrapped_env, "env"):
-                unwrapped_env = unwrapped_env.env
-            env_name = unwrapped_env.__class__.__name__.lower()
-
-            lz76_min, lz76_max = NORMALIZED_LZ76[env_name]
-            oi_min, oi_max = NORMALIZED_OI[env_name]
+            lz76_min, lz76_max = NORMALIZED_LZ76[self._base_env_name]
+            oi_min, oi_max = NORMALIZED_OI[self._base_env_name]
             
             normalized_complexity = jnp.clip((raw_complexity - lz76_min) / (lz76_max - lz76_min), 0.0, 1.0)
             normalized_o_info = jnp.clip(2.0 * ((raw_o_info - oi_min) / (oi_max - oi_min)) - 1.0, -1.0, 1.0)
 
-            jax.debug.print("Raw LZ complexity: {x}", x=raw_complexity)
-            jax.debug.print("Raw OI: {x}", x=raw_o_info)
-            jax.debug.print("Normalized complexity: {x}", x=normalized_complexity)
-            jax.debug.print("Normalized o-info: {x}", x=normalized_o_info)
+            if self._debug:
+                jax.debug.print("Raw LZ complexity: {x}", x=raw_complexity)
+                jax.debug.print("Raw OI: {x}", x=raw_o_info)
+                jax.debug.print("Normalized complexity: {x}", x=normalized_complexity)
+                jax.debug.print("Normalized o-info: {x}", x=normalized_o_info)
             
             return raw_complexity, raw_o_info, jnp.array([normalized_complexity, normalized_o_info])
         

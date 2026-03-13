@@ -2,6 +2,7 @@ import jax
 import jax.numpy as jnp
 from brax.v1 import jumpy as jp
 
+
 def action_to_binary(action: jnp.ndarray) -> jnp.ndarray:
     """Convert actions to binary representation.
     
@@ -29,6 +30,66 @@ def action_to_binary_padded(action: jp.ndarray) -> jnp.ndarray:
     action = action.flatten()
     
     return action_to_binary(action)
+
+
+def quantize_observation_sequence(
+    observations: jnp.ndarray,
+    min_values: jnp.ndarray,
+    max_values: jnp.ndarray,
+    num_bins: int,
+) -> jnp.ndarray:
+    """Discretize continuous observations into a flat symbol sequence.
+
+    Each observation dimension gets its own symbol range so that identical bin
+    indices from different dimensions are not conflated by LZ76.
+    """
+    observations = observations.astype(jnp.float32)
+    min_values = min_values.astype(jnp.float32)
+    max_values = max_values.astype(jnp.float32)
+
+    clipped = jnp.clip(observations, min_values, max_values)
+    ranges = jnp.maximum(max_values - min_values, 1e-6)
+    normalized = (clipped - min_values) / ranges
+    bin_indices = jnp.floor(normalized * num_bins).astype(jnp.int32)
+    bin_indices = jnp.clip(bin_indices, 0, num_bins - 1)
+
+    dim_offsets = jnp.arange(observations.shape[-1], dtype=jnp.int32) * num_bins
+    return (bin_indices + dim_offsets).reshape(-1)
+
+
+def quantize_observation_bins(
+    observations: jnp.ndarray,
+    min_values: jnp.ndarray,
+    max_values: jnp.ndarray,
+    num_bins: int,
+) -> jnp.ndarray:
+    """Discretize each observation component into a bin index."""
+    observations = observations.astype(jnp.float32)
+    min_values = min_values.astype(jnp.float32)
+    max_values = max_values.astype(jnp.float32)
+
+    clipped = jnp.clip(observations, min_values, max_values)
+    ranges = jnp.maximum(max_values - min_values, 1e-6)
+    normalized = (clipped - min_values) / ranges
+    bin_indices = jnp.floor(normalized * num_bins).astype(jnp.int32)
+    return jnp.clip(bin_indices, 0, num_bins - 1)
+
+
+def hash_quantized_observations(bin_indices: jnp.ndarray) -> jnp.ndarray:
+    """Pack one discretized state vector into a single symbol per timestep."""
+    modulus = jnp.int32(2_147_483_647)
+    multiplier = jnp.int32(131)
+
+    def pack_row(row: jnp.ndarray) -> jnp.ndarray:
+        def scan_fn(acc: jnp.ndarray, value: jnp.ndarray) -> tuple[jnp.ndarray, None]:
+            updated = jnp.mod(acc * multiplier + value + 1, modulus)
+            return updated, None
+
+        packed, _ = jax.lax.scan(scan_fn, jnp.int32(0), row.astype(jnp.int32))
+        return packed
+
+    return jax.vmap(pack_row)(bin_indices)
+
 
 def LZ76_jax(ss: jnp.ndarray) -> jnp.int32:
     """Implementation of the LZ76 algorithm."""

@@ -27,9 +27,10 @@ def run_dcrlme_oi_test(env_name: str = "ant_oil", num_iterations: int = 10) -> N
     """Run DCRLME test with the LZ76 wrapper and visualization."""
 
     print(f"Num devices: {jax.device_count()}")
+    print(f"Device: {jax.devices()[0]}")
     seed = 42
 
-    episode_length = 32
+    episode_length = 100
     min_bd = (0, -1)
     max_bd = (1, 1) 
 
