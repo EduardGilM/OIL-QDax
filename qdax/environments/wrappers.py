@@ -197,7 +197,7 @@ def exclude_column(matrix, col_idx):
     return result_matrix
 
 NORMALIZED_LZ76 = {
-    "ant": (237, 378),
+    "ant": (25, 64),
     "halfcheetah": (39, 53),
     "walker2d": (-538.19, 538.19), # Placeholder, need to compute
     "hopper": (-538.19, 538.19), # Placeholder, need to compute
@@ -209,7 +209,7 @@ NORMALIZED_LZ76 = {
 }
 
 NORMALIZED_OI = {
-    "ant": (-1457, 1751),
+    "ant": (-230, 800),
     "halfcheetah": (-325, 250),
     "walker2d": (-538.19, 538.19), # Placeholder, need to compute
     "hopper": (-122, 116), # Placeholder, need to compute
@@ -224,6 +224,72 @@ LZ_NUM_BINS = 64
 LZ_NUM_SAMPLES = 100
 DEFAULT_LZ_OBS_LIMIT = 20.0
 LZ_OBSERVATION_BOUNDS = {
+    "ant": (
+        jnp.array(
+            [
+                0.3,
+                0.1,
+                -0.2,
+                -0.2,
+                -0.7,
+                -0.6,
+                0.5,
+                -0.6,
+                -1.3,
+                -0.6,
+                -1.3,
+                -0.6,
+                0.5,
+                -1.2,
+                -1.2,
+                -1.4,
+                -2.7,
+                -2.7,
+                -6.0,
+                -10.0,
+                -9.6,
+                -9.6,
+                -10.3,
+                -9.9,
+                -10.5,
+                -9.9,
+                -10.0,
+            ],
+            dtype=jnp.float32,
+        ),
+        jnp.array(
+            [
+                0.8,
+                1.0,
+                0.2,
+                0.2,
+                1.0,
+                0.6,
+                1.3,
+                0.6,
+                -0.4,
+                0.6,
+                -0.5,
+                0.6,
+                1.3,
+                1.3,
+                1.4,
+                1.4,
+                2.8,
+                2.7,
+                6.3,
+                9.9,
+                10.3,
+                9.9,
+                10.1,
+                10.4,
+                9.3,
+                10.3,
+                10.3,
+            ],
+            dtype=jnp.float32,
+        ),
+    ),
     "halfcheetah": (
         jnp.array(
             [
