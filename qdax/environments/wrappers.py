@@ -160,6 +160,27 @@ def k_l_entropy(data, k=1):
     
     return jnp.float32(entropy)
 
+
+def k_l_entropy_batch(data, k=1):
+    """Batched equivalent of the legacy annax-based k_l_entropy."""
+    n_samples = data.shape[-2]
+    n_dimensions = data.shape[-1]
+    similarities = jnp.matmul(data, jnp.swapaxes(data, -1, -2))
+    candidate_indices = jnp.argpartition(similarities, -(k + 1), axis=-1)[..., -(k + 1) :]
+    candidate_values = jnp.take_along_axis(similarities, candidate_indices, axis=-1)
+    sorted_positions = jnp.argsort(-candidate_values, axis=-1)
+    sorted_indices = jnp.take_along_axis(candidate_indices, sorted_positions, axis=-1)
+    epsilon = sorted_indices[..., k].astype(data.dtype)
+    vol_hypersphere = jnp.pi ** (n_dimensions / 2) / gamma(n_dimensions / 2 + 1)
+    entropy = (
+        n_dimensions * jnp.mean(jnp.log(epsilon + 1e-10), axis=-1)
+        + jnp.log(vol_hypersphere + 1e-10)
+        + 0.577216
+        + jnp.log(n_samples - 1)
+    )
+    return entropy.astype(jnp.float32)
+
+
 def extract_single_column(matrix, col_idx):
     """Extract a single column from a matrix in a JAX-safe way.
     
@@ -197,8 +218,8 @@ def exclude_column(matrix, col_idx):
     return result_matrix
 
 NORMALIZED_LZ76 = {
-    "ant": (25, 64),
-    "halfcheetah": (39, 53),
+    "ant": (20, 42),
+    "halfcheetah": (31, 52),
     "walker2d": (-538.19, 538.19), # Placeholder, need to compute
     "hopper": (-538.19, 538.19), # Placeholder, need to compute
     "humanoid": (-538.19, 538.19), # Placeholder, need to compute
@@ -209,8 +230,8 @@ NORMALIZED_LZ76 = {
 }
 
 NORMALIZED_OI = {
-    "ant": (-230, 800),
-    "halfcheetah": (-325, 250),
+    "ant": (-55, 175),
+    "halfcheetah": (-30, 150),
     "walker2d": (-538.19, 538.19), # Placeholder, need to compute
     "hopper": (-122, 116), # Placeholder, need to compute
     "humanoid": (-538.19, 538.19), # Placeholder, need to compute
@@ -223,6 +244,8 @@ NORMALIZED_OI = {
 LZ_NUM_BINS = 64
 LZ_NUM_SAMPLES = 100
 DEFAULT_LZ_OBS_LIMIT = 20.0
+ANT_OIL_ANGULAR_FEATURES = (5, 13)
+HALFCHEETAH_OIL_ANGULAR_FEATURES = (3, 9)
 LZ_OBSERVATION_BOUNDS = {
     "ant": (
         jnp.array(
@@ -357,6 +380,66 @@ def _sample_lz_observations(obs_sequence: jnp.ndarray) -> jnp.ndarray:
     indices = jnp.linspace(0, obs_sequence.shape[0] - 1, num_samples).astype(jnp.int32)
     return obs_sequence[indices]
 
+
+def _oil_observation(env_name: str, obs: jnp.ndarray) -> jnp.ndarray:
+    if env_name == "ant":
+        angles = obs[ANT_OIL_ANGULAR_FEATURES[0] : ANT_OIL_ANGULAR_FEATURES[1]]
+        return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)))
+    if env_name in ("halfcheetah", "halfcheetah_angular"):
+        angles = obs[
+            HALFCHEETAH_OIL_ANGULAR_FEATURES[0] : HALFCHEETAH_OIL_ANGULAR_FEATURES[1]
+        ]
+        return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)))
+    return obs
+
+
+def compute_o_information(obs_sequence: jnp.ndarray) -> jnp.ndarray:
+    n_vars = obs_sequence.shape[1]
+    k = 3
+    h_joint = k_l_entropy(obs_sequence, k)
+    columns = jnp.swapaxes(obs_sequence, 0, 1)[..., jnp.newaxis]
+    h_xj = k_l_entropy_batch(columns, 1)
+    base_indices = jnp.arange(n_vars - 1)
+    excluded_indices = jax.vmap(lambda j: base_indices + (base_indices >= j))(
+        jnp.arange(n_vars)
+    )
+    excluded_data = jnp.take(obs_sequence, excluded_indices, axis=1).transpose(
+        1, 0, 2
+    )
+    h_excl_j = k_l_entropy_batch(excluded_data, max(k - 1, 1))
+    return (n_vars - 2) * h_joint + jnp.sum(h_xj - h_excl_j)
+
+
+def compute_oil_descriptor(obs_sequence: jnp.ndarray, env_name: str) -> jnp.ndarray:
+    obs_sequence = jax.vmap(lambda obs: _oil_observation(env_name, obs))(obs_sequence)
+    norm_env_name = "halfcheetah" if env_name == "halfcheetah_angular" else env_name
+    lz_obs_min, lz_obs_max = _get_lz_observation_bounds(norm_env_name, obs_sequence.shape[-1])
+    if env_name in ("ant", "halfcheetah", "halfcheetah_angular"):
+        lz_obs_min = jnp.full((obs_sequence.shape[-1],), -1.0, dtype=jnp.float32)
+        lz_obs_max = jnp.full((obs_sequence.shape[-1],), 1.0, dtype=jnp.float32)
+
+    complexity_obs_sequence = _sample_lz_observations(obs_sequence)
+    obs_bins = quantize_observation_bins(
+        complexity_obs_sequence,
+        lz_obs_min,
+        lz_obs_max,
+        LZ_NUM_BINS,
+    )
+    raw_lz = jnp.float32(jnp.mean(jax.vmap(LZ76_jax, in_axes=1)(obs_bins)))
+    lz_min, lz_max = NORMALIZED_LZ76[norm_env_name]
+    oi_min, oi_max = NORMALIZED_OI[norm_env_name]
+    lz = jnp.clip((raw_lz - lz_min) / (lz_max - lz_min + 1e-8), 0.0, 1.0)
+    oi = jnp.clip(
+        2.0 * ((compute_o_information(obs_sequence) - oi_min) / (oi_max - oi_min + 1e-8)) - 1.0,
+        -1.0,
+        1.0,
+    )
+    return jnp.array([lz, oi])
+
+
+compute_oil_descriptor_batch = jax.vmap(compute_oil_descriptor, in_axes=(0, None))
+
+
 class OILWrapper(Wrapper):
     """Wraps gym environments to add both Lempel-Ziv complexity and O-Information of the observations."""
 
@@ -385,13 +468,12 @@ class OILWrapper(Wrapper):
     def reset(self, rng: jp.ndarray) -> State:
         state = self.env.reset(rng)
         
-        obs_dim = state.obs.shape[0]
-        is_ant = self.env.__class__.__name__.lower() == "ant"
-
-        if is_ant:
-            obs_dim = min(obs_dim, 27)
+        obs_dim = _oil_observation(self._base_env_name, state.obs).shape[0]
 
         lz_obs_min, lz_obs_max = _get_lz_observation_bounds(self._base_env_name, obs_dim)
+        if self._base_env_name in ("ant", "halfcheetah"):
+            lz_obs_min = jnp.full((obs_dim,), -1.0, dtype=jnp.float32)
+            lz_obs_max = jnp.full((obs_dim,), 1.0, dtype=jnp.float32)
         state.info["obs_sequence"] = jnp.zeros((self.episode_length, obs_dim), dtype=jnp.float32)
         state.info["lz_obs_min"] = lz_obs_min
         state.info["lz_obs_max"] = lz_obs_max
@@ -404,7 +486,7 @@ class OILWrapper(Wrapper):
     def step(self, state: State, action: jp.ndarray) -> State:
         state = self.env.step(state, action)    
         
-        obs = state.obs
+        obs = _oil_observation(self._base_env_name, state.obs)
         obs_dim = state.info["obs_sequence"].shape[1]
         
         obs = obs[:obs_dim]
@@ -477,22 +559,4 @@ class OILWrapper(Wrapper):
     
     def _compute_o_information(self, obs_sequence):
         """Compute O-Information with fully optimized JAX operations."""
-        n_samples, n_vars = obs_sequence.shape
-        k = 3
-
-        h_joint = k_l_entropy(obs_sequence, k)
-
-        def compute_h_terms(j, obs_sequence):
-            column_j = extract_single_column(obs_sequence, j)
-            h_xj = k_l_entropy(column_j, 1)
-            
-            data_excl_j = exclude_column(obs_sequence, j)
-            h_excl_j = k_l_entropy(data_excl_j, max(k-1, 1))
-            
-            term_result = h_xj - h_excl_j
-
-            return term_result
-    
-        sum_term = jnp.sum(jax.vmap(compute_h_terms, in_axes=(0, None))(jnp.arange(n_vars), obs_sequence))
-
-        return (n_vars - 2) * h_joint + sum_term
+        return compute_o_information(obs_sequence)
