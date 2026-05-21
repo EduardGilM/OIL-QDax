@@ -21,10 +21,10 @@ from qdax.core.emitters.oil_credit_path_emitter import (
 from qdax.core.map_elites import MAPElites
 from qdax.core.neuroevolution.networks.networks import MLP, MLPDC
 from qdax.environments import behavior_descriptor_extractor
+from qdax.environments.oil_posthoc import compute_oil_descriptor_batch
 from qdax.environments.wrappers import (
     ClipRewardWrapper,
     OffsetRewardWrapper,
-    compute_oil_descriptor_batch,
 )
 from qdax.tasks.brax_envs import reset_based_scoring_function_brax_envs
 from qdax.utils.metrics import default_qd_metrics

@@ -40,11 +40,6 @@ def get_feet_contact_proportion(data: QDTransition, mask: jnp.ndarray) -> Descri
     return descriptors
 
 
-def get_oil_descriptors(data: QDTransition, mask: jnp.ndarray) -> Descriptor:
-    """Compute the Lempel-Ziv complexity and the O-Information"""
-    return data.state_desc[:, len(data.state_desc[0]) - 1]
-
-
 class AuroraExtraInfo(flax.struct.PyTreeNode):
     """
     Information specific to the AURORA algorithm.

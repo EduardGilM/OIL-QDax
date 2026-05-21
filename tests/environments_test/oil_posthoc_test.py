@@ -4,7 +4,7 @@ import jax.numpy as jnp
 from jax.scipy.special import gamma
 
 from qdax.environments.lz76 import quantize_observation_sequence
-from qdax.environments.wrappers import k_l_entropy
+from qdax.environments.oil_posthoc import k_l_entropy
 
 
 def _legacy_annax_entropy(data: jnp.ndarray, k: int) -> jnp.ndarray:

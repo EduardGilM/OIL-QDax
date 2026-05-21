@@ -13,7 +13,6 @@ from qdax.environments.base_wrappers import QDEnv, StateDescriptorResetWrapper
 from qdax.environments.bd_extractors import (
     get_feet_contact_proportion,
     get_final_xy_position,
-    get_oil_descriptors
 )
 from qdax.environments.exploration_wrappers import MazeWrapper, TrapWrapper
 from qdax.environments.humanoidtrap import HumanoidTrap
@@ -26,7 +25,7 @@ from qdax.environments.locomotion_wrappers import (
 from qdax.environments.pointmaze import PointMaze
 from qdax.environments.sphere import SphereEnv
 from qdax.environments.rastrigin import RastriginEnv
-from qdax.environments.wrappers import CompletedEvalWrapper, OILWrapper
+from qdax.environments.wrappers import CompletedEvalWrapper
 
 # experimentally determinated offset (except for antmaze)
 # should be sufficient to have only positive rewards but no guarantee
@@ -43,16 +42,6 @@ reward_offset = {
     "halfcheetah_uni": 9.231,
     "hopper_uni": 0.9,
     "walker2d_uni": 1.413,
-    "halfcheetah_oil": 0.0,
-    "hopper_oil": 0.0,        
-    "walker2d_oil": 0.0,    
-    "ant_oil": 0.0,          
-    "humanoid_oil": 0.0,      
-    "pointmaze_oil": 0.0,  
-    "grasp_oil": 0.0,
-    "fetch_oil": 0.0,
-    "sphere_oil": 0.0,
-    "rastrigin_oil": 0.0,
 }
 
 behavior_descriptor_extractor = {
@@ -68,16 +57,6 @@ behavior_descriptor_extractor = {
     "halfcheetah_uni": get_feet_contact_proportion,
     "hopper_uni": get_feet_contact_proportion,
     "walker2d_uni": get_feet_contact_proportion,
-    "pointmaze_oil": get_oil_descriptors,
-    "ant_oil": get_oil_descriptors,
-    "humanoid_oil": get_oil_descriptors,
-    "halfcheetah_oil": get_oil_descriptors,
-    "hopper_oil": get_oil_descriptors,
-    "walker2d_oil": get_oil_descriptors,
-    "grasp_oil": get_oil_descriptors,
-    "fetch_oil": get_oil_descriptors,
-    "sphere_oil": get_oil_descriptors,
-    "rastrigin_oil": get_oil_descriptors,
 }
 
 _qdax_envs = {
@@ -138,56 +117,6 @@ _qdax_custom_envs = {
         "env": "walker2d",
         "wrappers": [FeetContactWrapper],
         "kwargs": [{}, {}],
-    },
-    "pointmaze_oil": {
-        "env": "pointmaze",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "ant_oil": {
-        "env": "ant",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "humanoid_oil": {
-        "env": "humanoid",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "halfcheetah_oil": {
-        "env": "halfcheetah",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "hopper_oil": {
-        "env": "hopper",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "walker2d_oil": {
-        "env": "walker2d",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "grasp_oil": {
-        "env": "grasp",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "fetch_oil": {
-        "env": "fetch",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "sphere_oil": {
-        "env": "sphere",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
-    },
-    "rastrigin_oil": {
-        "env": "rastrigin",
-        "wrappers": [OILWrapper],
-        "kwargs": [{}],
     },
 }
 
