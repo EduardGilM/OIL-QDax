@@ -22,6 +22,10 @@ class OILArchiveEnvProxy:
         return 2
 
     @property
+    def state_descriptor_length(self):
+        return 2
+
+    @property
     def behavior_descriptor_limits(self):
         return jnp.array([0.0, -1.0]), jnp.array([1.0, 1.0])
 
@@ -78,9 +82,9 @@ def k_l_entropy_batch(data, k=1):
 NORMALIZED_LZ76 = {
     "ant": (20, 42),
     "halfcheetah": (31, 52),
-    "walker2d": (-538.19, 538.19),
-    "hopper": (-538.19, 538.19),
-    "humanoid": (-538.19, 538.19),
+    "walker2d": (2, 30),
+    "hopper": (2, 30),
+    "humanoid": (8, 40),
     "grasp": (1112, 1088),
     "fetch": (950, 970),
     "sphereenv": (90, 130),
@@ -90,9 +94,9 @@ NORMALIZED_LZ76 = {
 NORMALIZED_OI = {
     "ant": (-55, 175),
     "halfcheetah": (-30, 150),
-    "walker2d": (-538.19, 538.19),
-    "hopper": (-122, 116),
-    "humanoid": (-538.19, 538.19),
+    "walker2d": (-200, 450),
+    "hopper": (-50, 80),
+    "humanoid": (-300, 350),
     "grasp": (-800, 1462),
     "fetch": (-600, 1300),
     "sphereenv": (70, 90),
@@ -104,6 +108,9 @@ LZ_NUM_SAMPLES = 100
 DEFAULT_LZ_OBS_LIMIT = 20.0
 ANT_OIL_ANGULAR_FEATURES = (5, 13)
 HALFCHEETAH_OIL_ANGULAR_FEATURES = (3, 9)
+HOPPER_OIL_ANGULAR_FEATURES = (2, 5)
+WALKER2D_OIL_ANGULAR_FEATURES = (2, 8)
+HUMANOID_OIL_ANGULAR_FEATURES = (5, 22)
 LZ_OBSERVATION_BOUNDS = {
     "ant": (
         jnp.array(
@@ -247,6 +254,19 @@ def _oil_observation(env_name: str, obs: jnp.ndarray) -> jnp.ndarray:
             HALFCHEETAH_OIL_ANGULAR_FEATURES[0] : HALFCHEETAH_OIL_ANGULAR_FEATURES[1]
         ]
         return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)))
+    if env_name == "hopper":
+        angles = obs[HOPPER_OIL_ANGULAR_FEATURES[0] : HOPPER_OIL_ANGULAR_FEATURES[1]]
+        return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)))
+    if env_name == "walker2d":
+        angles = obs[
+            WALKER2D_OIL_ANGULAR_FEATURES[0] : WALKER2D_OIL_ANGULAR_FEATURES[1]
+        ]
+        return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)))
+    if env_name == "humanoid":
+        angles = obs[
+            HUMANOID_OIL_ANGULAR_FEATURES[0] : HUMANOID_OIL_ANGULAR_FEATURES[1]
+        ]
+        return jnp.concatenate((jnp.sin(angles), jnp.cos(angles)))
     return obs
 
 
@@ -273,7 +293,14 @@ def compute_oil_descriptor(obs_sequence: jnp.ndarray, env_name: str) -> jnp.ndar
     lz_obs_min, lz_obs_max = _get_lz_observation_bounds(
         norm_env_name, obs_sequence.shape[-1]
     )
-    if env_name in ("ant", "halfcheetah", "halfcheetah_angular"):
+    if env_name in (
+        "ant",
+        "halfcheetah",
+        "halfcheetah_angular",
+        "hopper",
+        "walker2d",
+        "humanoid",
+    ):
         lz_obs_min = jnp.full((obs_sequence.shape[-1],), -1.0, dtype=jnp.float32)
         lz_obs_max = jnp.full((obs_sequence.shape[-1],), 1.0, dtype=jnp.float32)
 

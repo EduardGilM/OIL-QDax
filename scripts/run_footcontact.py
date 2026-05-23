@@ -12,47 +12,136 @@ import matplotlib
 import numpy as np
 
 matplotlib.use("Agg")
+import matplotlib as mpl
+import matplotlib.cm as cm
 import matplotlib.pyplot as plt
+from matplotlib.colors import Normalize
+from mpl_toolkits.axes_grid1 import make_axes_locatable
 
 from qdax import environments
 from qdax.core.containers.mapelites_repertoire import compute_cvt_centroids
-from qdax.core.emitters.dcrl_me_emitter import DCRLMEConfig, DCRLMEEmitter
-from qdax.core.emitters.mutation_operators import isoline_variation
-from qdax.core.emitters.pga_me_emitter import PGAMEConfig, PGAMEEmitter
-from qdax.core.emitters.standard_emitters import MixingEmitter
 from qdax.core.map_elites import MAPElites
 from qdax.core.neuroevolution.buffers.buffer import DCRLTransition, QDTransition
 from qdax.core.neuroevolution.networks.networks import MLP, MLPDC
 from qdax.environments import behavior_descriptor_extractor
-from qdax.environments.oil_posthoc import (
-    OILArchiveEnvProxy,
-    compute_oil_descriptor_batch,
-)
-from qdax.environments.wrappers import (
-    ClipRewardWrapper,
-    OffsetRewardWrapper,
-)
+from qdax.environments.wrappers import ClipRewardWrapper, OffsetRewardWrapper
 from qdax.tasks.brax_envs import reset_based_scoring_function_brax_envs
 from qdax.utils.metrics import default_qd_metrics
-from qdax.utils.plotting_utils import (
+from qdax.utils.plotting import (
     plot_2d_map_elites_repertoire,
-    plot_oi_map_elites_results,
+    plot_map_elites_results,
+    plot_multidimensional_map_elites_grid,
 )
 
+from scripts.run_oil_posthoc import _make_emitter
 
-def _base_env_name(env_name: str) -> str:
-    return env_name.replace("_uni", "").replace("_omni", "")
+
+def _plot_1d_archive(repertoire, ax, min_bd, max_bd, title):
+    fitnesses = np.asarray(repertoire.fitnesses)
+    centroids = np.asarray(repertoire.centroids).reshape(-1)
+    descriptors = np.asarray(repertoire.descriptors).reshape(-1)
+    valid = np.isfinite(fitnesses)
+    order = np.argsort(centroids)
+    sorted_centroids = centroids[order]
+    min_x = float(np.asarray(min_bd).reshape(-1)[0])
+    max_x = float(np.asarray(max_bd).reshape(-1)[0])
+    bounds = np.empty(sorted_centroids.size + 1)
+    bounds[0], bounds[-1] = min_x, max_x
+    bounds[1:-1] = 0.5 * (sorted_centroids[:-1] + sorted_centroids[1:])
+    vmin = float(np.min(fitnesses[valid])) if np.any(valid) else 0.0
+    vmax = float(np.max(fitnesses[valid])) if np.any(valid) else 1.0
+    cmap = cm.viridis
+    norm = Normalize(vmin=vmin, vmax=vmax)
+
+    for rank, idx in enumerate(order):
+        color = cmap(norm(fitnesses[idx])) if valid[idx] else "white"
+        alpha = 0.8 if valid[idx] else 0.05
+        ax.fill(
+            [bounds[rank], bounds[rank + 1], bounds[rank + 1], bounds[rank]],
+            [0.0, 0.0, 1.0, 1.0],
+            alpha=alpha,
+            edgecolor="black",
+            facecolor=color,
+            lw=1,
+        )
+
+    if np.any(valid):
+        ax.scatter(
+            descriptors[valid],
+            np.full(np.sum(valid), 0.5),
+            c=fitnesses[valid],
+            cmap=cmap,
+            s=10,
+            zorder=5,
+            norm=norm,
+        )
+
+    ax.set_xlim(min_x, max_x)
+    ax.set_ylim(0.0, 1.0)
+    ax.set_xlabel("Behavior Descriptor 1")
+    ax.set_ylabel("Behavior Descriptor 2")
+    ax.set_title(title)
+    ax.set_aspect("equal")
+    divider = make_axes_locatable(ax)
+    cax = divider.append_axes("right", size="5%", pad=0.05)
+    plt.colorbar(mpl.cm.ScalarMappable(norm=norm, cmap=cmap), cax=cax)
+
+
+def _plot_archive(repertoire, ax, min_bd, max_bd, title):
+    if repertoire.centroids.shape[1] == 1:
+        _plot_1d_archive(repertoire, ax, min_bd, max_bd, title)
+        return
+    if repertoire.centroids.shape[1] > 2:
+        grid_shape = (
+            (8, 8, 4, 4)
+            if repertoire.centroids.shape[1] == 4
+            else tuple([4] * repertoire.centroids.shape[1])
+        )
+        plot_multidimensional_map_elites_grid(
+            repertoire,
+            min_bd,
+            max_bd,
+            grid_shape=grid_shape,
+            ax=ax,
+        )
+        ax.set_title(title)
+        return
+    plot_2d_map_elites_repertoire(
+        centroids=repertoire.centroids,
+        repertoire_fitnesses=repertoire.fitnesses,
+        minval=min_bd,
+        maxval=max_bd,
+        repertoire_descriptors=repertoire.descriptors,
+        ax=ax,
+    )
+    ax.set_title(title)
+
+
+def _plot_results(env_steps, metrics, repertoire, min_bd, max_bd):
+    if repertoire.centroids.shape[1] == 2:
+        return plot_map_elites_results(env_steps, metrics, repertoire, min_bd, max_bd)
+
+    fig, axes = plt.subplots(nrows=1, ncols=4, figsize=(40, 10))
+    axes[0].plot(env_steps, metrics["coverage"])
+    axes[0].set_xlabel("Environment steps")
+    axes[0].set_ylabel("Coverage in %")
+    axes[0].set_title("Coverage evolution during training")
+    axes[1].plot(env_steps, metrics["max_fitness"])
+    axes[1].set_xlabel("Environment steps")
+    axes[1].set_ylabel("Maximum fitness")
+    axes[1].set_title("Maximum fitness evolution during training")
+    axes[2].plot(env_steps, metrics["qd_score"])
+    axes[2].set_xlabel("Environment steps")
+    axes[2].set_ylabel("QD Score")
+    axes[2].set_title("QD Score evolution during training")
+    _plot_archive(repertoire, axes[3], min_bd, max_bd, "MAP-Elites Grid")
+    return fig, axes
 
 
 def _make_play_step(env, policy_network, use_dcrl_transition: bool):
     def play_step(env_state, policy_params, random_key):
         actions = policy_network.apply(policy_params, env_state.obs)
         next_state = env.step(env_state, actions)
-        state_desc = env_state.info["state_descriptor"]
-        next_state_desc = next_state.info["state_descriptor"]
-        if use_dcrl_transition:
-            state_desc = jnp.zeros(2)
-            next_state_desc = jnp.zeros(2)
         transition_kwargs = dict(
             obs=env_state.obs,
             next_obs=next_state.obs,
@@ -60,14 +149,14 @@ def _make_play_step(env, policy_network, use_dcrl_transition: bool):
             dones=next_state.done,
             truncations=next_state.info["truncation"],
             actions=actions,
-            state_desc=state_desc,
-            next_state_desc=next_state_desc,
+            state_desc=env_state.info["state_descriptor"],
+            next_state_desc=next_state.info["state_descriptor"],
         )
         if use_dcrl_transition:
             transition = DCRLTransition(
                 **transition_kwargs,
-                desc=jnp.zeros(2) * jnp.nan,
-                desc_prime=jnp.zeros(2) * jnp.nan,
+                desc=jnp.zeros(env.behavior_descriptor_length) * jnp.nan,
+                desc_prime=jnp.zeros(env.behavior_descriptor_length) * jnp.nan,
             )
         else:
             transition = QDTransition(**transition_kwargs)
@@ -76,83 +165,36 @@ def _make_play_step(env, policy_network, use_dcrl_transition: bool):
     return play_step
 
 
-def _make_emitter(name, env, oil_env, policy_network, actor_network, batch_size):
-    variation_fn = functools.partial(
-        isoline_variation, iso_sigma=0.005, line_sigma=0.05
-    )
-    if name == "mapelites":
-        return MixingEmitter(
-            mutation_fn=lambda x, r: (x, r),
-            variation_fn=variation_fn,
-            variation_percentage=1.0,
-            batch_size=batch_size,
-        )
-    if name == "pga":
-        return PGAMEEmitter(
-            config=PGAMEConfig(
-                env_batch_size=batch_size,
-                proportion_mutation_ga=0.5,
-                num_critic_training_steps=3000,
-                num_pg_training_steps=150,
-                replay_buffer_size=1_000_000,
-                critic_hidden_layer_size=(256, 256),
-                critic_learning_rate=3e-4,
-                greedy_learning_rate=3e-4,
-                policy_learning_rate=5e-3,
-                batch_size=batch_size,
-            ),
-            policy_network=policy_network,
-            env=env,
-            variation_fn=variation_fn,
-        )
-    if name == "dcrlme":
-        return DCRLMEEmitter(
-            config=DCRLMEConfig(
-                ga_batch_size=128,
-                dcrl_batch_size=64,
-                ai_batch_size=64,
-                lengthscale=0.1,
-                critic_hidden_layer_size=(256, 256),
-                num_critic_training_steps=3000,
-                num_pg_training_steps=150,
-                batch_size=batch_size,
-                replay_buffer_size=1_000_000,
-                critic_learning_rate=3e-4,
-                actor_learning_rate=3e-4,
-                policy_learning_rate=5e-3,
-            ),
-            policy_network=policy_network,
-            actor_network=actor_network,
-            env=oil_env,
-            variation_fn=variation_fn,
-        )
-    raise ValueError(f"Unknown emitter: {name}")
-
-
 def main() -> None:
     parser = argparse.ArgumentParser()
     parser.add_argument("env_name", nargs="?", default="halfcheetah_uni")
-    parser.add_argument("emitter", nargs="?", choices=("mapelites", "pga", "dcrlme"), default="dcrlme")
+    parser.add_argument(
+        "emitter",
+        nargs="?",
+        choices=("mapelites", "pga", "dcrlme", "dcrl"),
+        default="dcrlme",
+    )
     parser.add_argument("num_iterations", nargs="?", type=int, default=1000)
     parser.add_argument("--seed", type=int, default=int(os.environ.get("OIL_SEED", "42")))
     args = parser.parse_args()
+    emitter_name = "dcrlme" if args.emitter == "dcrl" else args.emitter
+    if not args.env_name.endswith("_uni"):
+        raise ValueError("Foot-contact baselines use *_uni environments.")
 
     episode_length = 100
     batch_size = 256
     num_centroids = 1024
-    base_env_name = _base_env_name(args.env_name)
 
     print("=" * 70)
-    print(f"OIL-Posthoc-{args.emitter}")
+    print(f"FootContact-{emitter_name}")
     print("=" * 70)
     print(f"Config: env={args.env_name}, bs={batch_size}, centroids={num_centroids}")
     print(f"  iters={args.num_iterations}, seed={args.seed}")
-    print("  archive descriptor: oil posthoc")
+    print("  archive descriptor: environment behavior descriptor")
 
     env = environments.create(args.env_name, episode_length=episode_length)
     env = OffsetRewardWrapper(env, offset=environments.reward_offset[args.env_name])
     env = ClipRewardWrapper(env, clip_min=0.0)
-    oil_env = OILArchiveEnvProxy(env)
     reset_fn = jax.jit(env.reset)
 
     policy_network = MLP(
@@ -173,33 +215,15 @@ def main() -> None:
         jnp.zeros((batch_size, env.observation_size)),
     )
 
-    base_scoring = functools.partial(
+    scoring_fn = functools.partial(
         reset_based_scoring_function_brax_envs,
         episode_length=episode_length,
         play_reset_fn=reset_fn,
         play_step_fn=_make_play_step(
-            env, policy_network, use_dcrl_transition=args.emitter == "dcrlme"
+            env, policy_network, use_dcrl_transition=emitter_name == "dcrlme"
         ),
         behavior_descriptor_extractor=behavior_descriptor_extractor[args.env_name],
     )
-    behavior_scoring = functools.partial(
-        reset_based_scoring_function_brax_envs,
-        episode_length=episode_length,
-        play_reset_fn=reset_fn,
-        play_step_fn=_make_play_step(env, policy_network, use_dcrl_transition=False),
-        behavior_descriptor_extractor=behavior_descriptor_extractor[args.env_name],
-    )
-
-    def scoring_fn(genotypes, random_key):
-        fitnesses, behavior_descriptors, extra_scores, random_key = base_scoring(
-            genotypes, random_key
-        )
-        oil_descriptors = compute_oil_descriptor_batch(
-            extra_scores["transitions"].next_obs, base_env_name
-        )
-        extra_scores["behavior_descriptors"] = behavior_descriptors
-        extra_scores["oil_descriptors"] = oil_descriptors
-        return fitnesses, oil_descriptors, extra_scores, random_key
 
     metrics_fn = functools.partial(
         default_qd_metrics,
@@ -207,13 +231,13 @@ def main() -> None:
     )
 
     key, subkey = jax.random.split(key)
-    min_bd, max_bd = oil_env.behavior_descriptor_limits
+    min_bd, max_bd = env.behavior_descriptor_limits
     centroids, key = compute_cvt_centroids(
-        2, 50_000, num_centroids, min_bd, max_bd, subkey
+        env.behavior_descriptor_length, 50_000, num_centroids, min_bd, max_bd, subkey
     )
 
     emitter = _make_emitter(
-        args.emitter, env, oil_env, policy_network, actor_network, batch_size
+        emitter_name, env, env, policy_network, actor_network, batch_size
     )
     map_elites = MAPElites(scoring_fn, emitter, metrics_fn)
 
@@ -264,7 +288,7 @@ def main() -> None:
     print(f"Time:    {elapsed:.0f}s ({elapsed / 60:.1f} min)")
 
     timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-    output_dir = f"repertoires/oil_posthoc/{args.env_name}/{args.emitter}/{timestamp}"
+    output_dir = f"repertoires/foot_contact/{args.env_name}/{emitter_name}/{timestamp}"
     os.makedirs(output_dir, exist_ok=True)
     repertoire.save(output_dir + "/")
 
@@ -272,46 +296,41 @@ def main() -> None:
     metric_len = len(next(iter(metrics_np.values())))
     metrics_np["env_steps"] = np.arange(1, metric_len + 1) * batch_size * episode_length
     np.savez(f"{output_dir}/metrics.npz", **metrics_np)
-    _, behavior_descriptors, _, key = behavior_scoring(repertoire.genotypes, key)
-    np.save(f"{output_dir}/behavior_descriptors.npy", np.asarray(behavior_descriptors))
+    np.save(f"{output_dir}/behavior_descriptors.npy", np.asarray(repertoire.descriptors))
 
     figures_dir = f"{output_dir}/figures"
     os.makedirs(figures_dir, exist_ok=True)
-    fig1, _ = plot_oi_map_elites_results(
-        env_steps=jnp.asarray(metrics_np["env_steps"]),
-        metrics={name: jnp.asarray(values) for name, values in all_metrics.items()},
-        repertoire=repertoire,
-        min_bd=min_bd,
-        max_bd=max_bd,
+    metrics_jnp = {name: jnp.asarray(values) for name, values in all_metrics.items()}
+    fig1, _ = _plot_results(
+        jnp.asarray(metrics_np["env_steps"]), metrics_jnp, repertoire, min_bd, max_bd
     )
-    metrics_png = f"{figures_dir}/oil_posthoc_{args.emitter}_metrics.png"
+    metrics_png = f"{figures_dir}/foot_contact_{emitter_name}_metrics.png"
     fig1.savefig(metrics_png, dpi=200, bbox_inches="tight")
     plt.close(fig1)
 
     fig2, ax = plt.subplots(figsize=(10, 10))
-    plot_2d_map_elites_repertoire(
+    _plot_archive(
         repertoire=repertoire,
         ax=ax,
         min_bd=min_bd,
         max_bd=max_bd,
-        title=f"Archive Final - {args.env_name} ({args.emitter} OIL posthoc)",
+        title=f"Archive Final - {args.env_name} ({emitter_name} foot-contact)",
     )
-    archive_png = f"{figures_dir}/oil_posthoc_{args.emitter}_archive.png"
+    archive_png = f"{figures_dir}/foot_contact_{emitter_name}_archive.png"
     fig2.savefig(archive_png, dpi=200, bbox_inches="tight")
     plt.close(fig2)
 
     summary = {
         "timestamp": timestamp,
         "config": {
-            "emitter": args.emitter,
+            "emitter": emitter_name,
             "env_name": args.env_name,
             "iters": args.num_iterations,
             "bs": batch_size,
             "centroids": num_centroids,
             "seed": args.seed,
             "episode_length": episode_length,
-            "archive_descriptor_type": "oil_posthoc",
-            "oil_env_name": base_env_name,
+            "archive_descriptor_type": "foot_contact",
         },
         "results": {
             "fitness": fitness,
