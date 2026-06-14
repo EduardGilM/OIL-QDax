@@ -73,6 +73,7 @@ python -m scripts.plot_descriptor_comparison_maps
 
 ![HalfCheetah](/docs/oil/halfcheetah.gif)
 ![Walker](/docs/oil/walker.gif)
+![Discovered behavior](/docs/oil/20.gif)
 
 ---
 
