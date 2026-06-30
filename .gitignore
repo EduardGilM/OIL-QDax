@@ -18,6 +18,8 @@ tmp.def
 *.pdf
 *.mp4
 *.gif
+# Keep README preview gifs under docs/oil/
+!docs/oil/*.gif
 
 # IDE configuration file
 .idea/
